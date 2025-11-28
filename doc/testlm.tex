@@ -1,0 +1,232 @@
+\documentclass[12pt, letterpaper]{article}
+\usepackage{graphicx} % Required for inserting images
+\usepackage{amsmath}
+\usepackage{mdframed}
+\usepackage{amssymb}
+
+\title{TestLM, Test Lagrange Multiplier for Applying Dirichelet Conditions with MFEM library}
+\author{Denis Lachapelle}
+\date{November 2025}
+
+\setlength{\parindent}{0pt}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+This document explains using the Lagrange multiplier for applying Dirichlet Boundary Conditions. It start with ex1p.cpp from MFEM library.
+Example 1 solve the Poisson equation.
+\begin{equation}-\Delta u = 1.0\end{equation}
+In weakform 
+\begin{equation}\int_\Omega -\Delta u \phi d\Omega = \int_\Omega \phi d\Omega\end{equation}
+
+
+
+\section{How Dirichlet Conditions are Normally Applied}
+  
+  Boundary conditions are applied by projecting the coefficient onto the grid function.
+  
+  \begin{verbatim}
+  	ParGridFunction x(&fespace);
+  	x = 0.0;
+  	Vector BCV(pmesh.bdr_attributes.Size());
+  	BCV[0] = -1.0;
+  	BCV[1] = -1.0;
+  	BCV[2] = -1.0;
+  	BCV[3] = -1.0;
+  	BCV[4] = 1.0;
+  	BCV[5] = 1.0;
+  	BCV[6] = 1.0;
+  	BCV[7] = 1.0;
+  	PWConstCoefficient BC(BCV);
+  	x.ProjectBdrCoefficient(BC, ess_bdr);  // <-- sets boundary dofs to g
+  \end{verbatim}
+    and then call formlinearsystem to adjust the rhs and eliminate row/col for the solver.
+ \begin{verbatim}  
+  FormLinearSystem(ess_tdof_list, x, b, A, X, B);
+ \end{verbatim}    
+   Later re-adjusted with recoversolution(...).
+ \begin{verbatim}  
+  RecoverFEMSolution(X, b, x);
+ \end{verbatim}
+ 
+ The following figure shows boundary conditions -1.0  and 1.0 on the square and circular boundaries.
+ 
+ \includegraphics{graph_01.png}
+ 
+  \section{The Dirichlet Boundary Conditions applied with LM}
+  
+  The boundary condition on the square boundary and on the circular boundary: $u_s = BCs$ and $u_c = BCc$.
+  
+  In weakform it becomes
+  
+  \begin{equation}\int_s u \phi = \int_s BCs \phi\end{equation}
+  \begin{equation}\int_c u \phi = \int_s BCc \phi\end{equation}
+  
+  \begin{equation}
+  \begin{bmatrix}
+  	BLFA & BLFs^T & BLFc^T \\
+  	BLFs   & 0 & 0 \\
+  	BLFc & 0 & 0
+  \end{bmatrix}
+  \begin{bmatrix}
+  	U\\
+  	Ls\\
+  	Lc
+  \end{bmatrix}
+  =
+  \begin{bmatrix}
+  	LFA\\
+  	LFs \\
+  	LFc
+  \end{bmatrix}	
+  \end{equation}
+  
+  The LM will live on submesh, one for square boundary and one for the circular boundary.\\
+  Spaces will be made for u over each submesh and for the LM.\\
+  TransferMap will be needed between each submesh to the main mesh.\\
+  BLFA is a BilinearForm with DiffusionIntegrator with coefficient of +1.0.\\
+  BLFs is a MixedBilinearForm with MassIntegrator with coefficient of +1.0.\\
+  BLFc is a MixedBilinearForm with MassIntegrator with coefficient of +1.0.\\
+  LFA is a LinearForm with DomainLFIntegrator with coefficient +1.0.\\
+  LFs is a LinearForm with DomainLFIntegrator with coefficient -1.0.\\
+  LFc is a LinearForm with DomainLFIntegrator with coefficient +1.0.\\
+   
+   The block matrix above can be written in standard way for LM block matrix.
+   
+   \begin{equation}
+  	\begin{bmatrix}
+  		A & B^T \\
+  		B   & 0
+   	\end{bmatrix}
+  	\begin{bmatrix}
+  		U\\
+  		L
+  	\end{bmatrix}
+  	=
+  	\begin{bmatrix}
+  		LFA\\
+  		LFL
+  	\end{bmatrix}	
+  \end{equation}\\
+  
+
+I convert the code from \underline{parallel to serial} and get a result that is better after some code correction, especially the boundary defining the submesh that were not having the proper attribute.\\
+
+The following graph was obtain with \textbf{"ex01\_03.cpp"} without a preconditioner. The result looks quite good even if the convergence was not fully completed after 50000 iterations. FGMRES and GMRES solvers both offer similar results. If I reduce the number of element refinement to less the 1000 instead of 10000 it converge. I try with order 2 and 3 the results are ok but the converge did not reach $10^{-6}$ after 100000 iterations.\\
+
+I also try with various order for the field and the Lagrange multiplier.
+
+\includegraphics{graph_02.png}
+
+\section{Next step is to make a preconditioner.}
+\subsection{Simple DSmoother diagonal block based preconditioner}
+
+That is the code "ex01\_04.cpp".\\
+I implement a class doing a block diagonal preconditioner using three DSmoother.\\
+ 
+DSmoother can be call with various parameters and I try to optimize the parameters to reduce the number of iterations.\\
+
+849 (0, 0, 0)\\
+351 (1, 0, 10)\\
+126 (1, 0, 100)\\
+70 (1, 0, 1000)\\
+61 (1, 0, 10000)\\
+
+The class for the simple preconditioner is shown below:
+
+\begin{verbatim}
+/// Block-diagonal preconditioner for
+/// [ A   B1^T  B2^T ]
+/// [ B1   0     0   ]
+/// [ B2   0     0   ]
+///
+/// P^{-1} ≈ diag(A^{-1}, S1^{-1}, S2^{-1}),
+/// using DSmoother.
+class ThreeBlockDiagonalPreconditioner : public Solver
+{
+	private:
+	Array<int> block_offsets;
+	const SparseMatrix &A, &M1, &M2;
+	DSmoother *precA, *precM1, *precM2;
+	public:
+	ThreeBlockDiagonalPreconditioner(const Array<int> &offsets,
+	const SparseMatrix &A_,
+	const SparseMatrix &M1_,
+	const SparseMatrix &M2_)
+	: Solver(offsets.Last()),
+	block_offsets(offsets),
+	A(A_), M1(M1_), M2(M2_)
+	{
+		height = width = block_offsets.Last();
+		
+		precA = new DSmoother(1, 1.0, 100);
+		precM1 = new DSmoother(1, 1.0, 100);
+		precM2 = new DSmoother(1, 1.0, 100);
+		
+		MFEM_VERIFY(A.Finalized(), "Matrix A must be finalized.");
+		MFEM_VERIFY(M1.Finalized(), "Matrix M1 must be finalized.");
+		MFEM_VERIFY(M2.Finalized(), "Matrix M2 must be finalized.");
+		
+		// --- Build diagonals and DSmoothers (inside the class) ---
+		precA->SetOperator(A);
+		precM1->SetOperator(M1);
+		precM2->SetOperator(M2);
+	}
+	
+	virtual ~ThreeBlockDiagonalPreconditioner() {}
+	
+	virtual void SetOperator(const Operator &op) override
+	{
+		MFEM_ASSERT(op.Height() == op.Width(), "Operator must be square.");
+		MFEM_ASSERT(op.Height() == height, "Operator size must match block offsets.");
+	}
+	
+	virtual void Mult(const Vector &x, Vector &y) const override
+	{
+		MFEM_ASSERT(x.Size() == Size(), "Preconditioner input size mismatch.");
+		MFEM_ASSERT(y.Size() == Size(), "Preconditioner output size mismatch.");
+		
+		// remove const only locally, we won't modify x through xx
+		Vector &xx = const_cast<Vector &>(x);
+		Vector x0(xx, 0, block_offsets[1]); // primal
+		Vector x1(xx, block_offsets[1], block_offsets[2] - block_offsets[1]); // LM1
+		Vector x2(xx, block_offsets[2], block_offsets[3] - block_offsets[2]); // LM2
+		
+		Vector y0(y, 0, block_offsets[1]); // primal
+		Vector y1(y, block_offsets[1], block_offsets[2] - block_offsets[1]); // LM1
+		Vector y2(y, block_offsets[2], block_offsets[3] - block_offsets[2]); // LM2
+		
+		precA->Mult(x0, y0);
+		precM1->Mult(x1, y1);
+		precM2->Mult(x2, y2);
+	}
+};
+\end{verbatim}
+
+\subsection{A better preconditioner}
+
+That is the code "ex01\_05.cpp".\\
+
+    
+
+  
+   
+   
+   
+   \textbf{need to arrange lvalue and pointer in the file it is all mixed}
+  
+  
+   \begin{verbatim}  
+  	 https://arxiv.org/pdf/2105.09152
+  \end{verbatim}
+ 
+  
+  
+  
+  
+  \noindent\makebox[\linewidth]{\rule{\paperwidth}{0.4pt}}
+  
+  
+\end{document}

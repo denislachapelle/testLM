@@ -209,6 +209,46 @@ class ThreeBlockDiagonalPreconditioner : public Solver
 
 That is the code "ex01\_05.cpp".\\
 
+The block matrix is:
+
+\begin{equation}
+	\begin{bmatrix}
+		A & B1^T & B2^T \\
+		B1   & 0 & 0 \\
+		B2 & 0 & 0
+	\end{bmatrix}	
+\end{equation} 
+
+The Schur complement of matrix A for the second row $SC1 = -B1 A^{-1} B1^T$ and for the third row $SC2 = -B2 A^{-1} B2^T$.
+
+The preconditioner will take the form
+\begin{equation}
+	\begin{bmatrix}
+		A^{-1} & 0 & 0 \\
+		0 & -SC1^{-1} & 0 \\
+		0 & 0 & -SC2^{-1}
+	\end{bmatrix}	
+\end{equation}
+
+$A^{-1}$ will be approximated with DSmoother or other smoother.\\
+
+The class InvSchurComp implement  $-(B A^{-1} B^T)^{-1}$ as an operator. 
+
+
+
+
+ 
+
+
+
+
+
+x\\
+x\\
+x\\
+x\\
+x\\
+
     
 
   

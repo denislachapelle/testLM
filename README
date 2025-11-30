@@ -1,0 +1,35 @@
+ex1p.cpp
+Original MFEM-4.8 example.
+Status: works fine.
+
+ex1p_01.cpp
+Add boundary condition on the square and circle, -1.0 and 1.0 using projectBrdCoefficient.
+Status: Works fine.
+
+ex1p_02.cpp
+implement the same boundary conditions using Lagrange multipliers.
+Status: Did not work.
+
+ex1_03.cpp
+implement the same boundary conditions using Lagrange multipliers and in ***serial*** mode.
+Status: works fine.
+
+ex1_04.cpp
+same as ex1_03 with added simple dsmoother based block preconditioner.
+Status: works fine.
+
+ex1_05.cpp
+same as ex1_04 with improved preconditioners selectable.
+Status: works fine.
+
+From this knowledge acquire I can return to transmission line 2D....
+
+
+
+
+
+
+
+
+
+

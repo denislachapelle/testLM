@@ -232,41 +232,117 @@ The preconditioner will take the form
 
 $A^{-1}$ will be approximated with DSmoother or other smoother.\\
 
-The class InvSchurComp implement  $-(B A^{-1} B^T)^{-1}$ as an operator. 
+The class InvSchurComp implement  $-(B A^{-1} B^T)^{-1}$ as an operator and the class CompleteSchurPreconditioner implement the two Schur based on the approximated $A^{-1}$ and implement the block diagonal operator.
 
+\begin{verbatim}
+	/* This class implement an operator applying the inverse of Schur complement.
+	Ainv_: Operator applying the aproximative inverse of the system matrix.
+	B_: Operator applying Lagrange multiplier matrix.
+	*/   
+	class InvSchurComp : public Solver   
+	{
+		private:
+		Solver &Ainv;
+		SubmeshOperator &B;
+		TransposeOperator *BT;
+		GMRESSolver *solver;
+		ProductOperator *AM1BT, *BAM1BT;
+		public:
+		InvSchurComp(Solver &Ainv_, SubmeshOperator &B_)
+		: Solver(B_.Height()), Ainv(Ainv_), B(B_)
+		{
+			
+			BT = new TransposeOperator(B);
+			AM1BT = new ProductOperator(&Ainv, BT, false, false);
+			BAM1BT = new ProductOperator(&B, AM1BT, false, false);
+			
+			solver = new GMRESSolver();
+			solver->SetAbsTol(0);
+			solver->SetRelTol(1e-2);
+			solver->SetMaxIter(200);
+			solver->SetPrintLevel(0);
+			solver->SetKDim(20);
+			solver->SetOperator(*BAM1BT);
+			
+		}
+		
+		virtual void Mult(const Vector &b, Vector &x) const override
+		{
+			x = 0.0;
+			solver->Mult(b, x);
+		}
+		
+		virtual void SetOperator(const Operator &op)
+		{
+			
+		}
+	};
+	
+	class CompleteSchurPreconditioner : public Solver
+	{
+		private:
+		InvSchurComp *SC1, *SC2;
+		Solver &Ainv;
+		SubmeshOperator &B1, &B2;
+		int Size;
+		const Array<int> &block_offsets;
+		public:
+		CompleteSchurPreconditioner(const Array<int> &block_offsets_, Solver &Ainv_, SubmeshOperator &B1_, SubmeshOperator &B2_)
+		: Solver(Ainv_.Height() + B1_.Height() + B2_.Height()), Ainv(Ainv_), B1(B1_), B2(B2_), block_offsets(block_offsets_)
+		{
+			SC1 = new InvSchurComp(Ainv, B1);
+			SC2 = new InvSchurComp(Ainv, B2);
+			Size = Ainv_.Height() + B1_.Height() + B2_.Height();
+		}
+		
+		virtual void Mult(const Vector &x, Vector &y) const override
+		{
+			MFEM_ASSERT(x.Size() == Size(), "Preconditioner input size mismatch.");
+			MFEM_ASSERT(y.Size() == Size(), "Preconditioner output size mismatch.");
+			
+			// remove const only locally, we won't modify x through xx
+			Vector &xx = const_cast<Vector &>(x);
+			Vector x0(xx, 0, block_offsets[1]); // primal
+			Vector x1(xx, block_offsets[1], block_offsets[2] - block_offsets[1]); // LM1
+			Vector x2(xx, block_offsets[2], block_offsets[3] - block_offsets[2]); // LM2
+			
+			Vector y0(y, 0, block_offsets[1]); // primal
+			Vector y1(y, block_offsets[1], block_offsets[2] - block_offsets[1]); // LM1
+			Vector y2(y, block_offsets[2], block_offsets[3] - block_offsets[2]); // LM2
+			
+			Ainv.Mult(x0, y0);
+			SC1->Mult(x1, y1);
+			SC2->Mult(x2, y2);
+		}
+		
+		virtual void SetOperator(const Operator &op)
+		{
+			
+		}
+	};
+\end{verbatim}
 
+The next figure is produced with command "./ex1\_05 -fo 2 -lmo 2 -pt 2"
 
+\includegraphics{graph_03.png}
 
- 
+\begin{center}
+	\begin{tabular}{| c| c| c| c| }
+		\hline
+		\textbf{preconditioner type} & \textbf{command} & \textbf{iterations} & \textbf{cpu time} \\
+		\hline
+		no preconditioner & ./ex1\_05 -fo 1 -lmo 1 -pt 0 & 434 & 0.018 \\  
+		DSmoother diagonal & ./ex1\_05 -fo 1 -lmo 1 -pt 1 & 56 & 0.021 \\ 
+		Schur diagonal & ./ex1\_05 -fo 1 -lmo 1 -pt 2 & 39 & 0.018 \\
+		  no preconditioner & ./ex1\_05 -fo 2 -lmo 2 -pt 0 & 2468 & 0.18 \\ 
+		DSmoother diagonal & ./ex1\_05 -fo 2 -lmo 2 -pt 1 & 88 & 0.080 \\  
+		Schur diagonal & ./ex1\_05 -fo 2 -lmo 2 -pt 2 & 67 & 0.13   \\ 
+		\hline
+	\end{tabular}
+\end{center}
 
+\section{Conclusion}
+The simple PDE equation systems including the Lagrange Multiplier is converging even without a preconditioner; with the preconditioners the number of iteration get reduced but the CPU time did not reduce much. But at least we prove the preconditioner works, at least they did not destroy the stability.
 
-
-
-
-x\\
-x\\
-x\\
-x\\
-x\\
-
-    
-
-  
-   
-   
-   
-   \textbf{need to arrange lvalue and pointer in the file it is all mixed}
-  
-  
-   \begin{verbatim}  
-  	 https://arxiv.org/pdf/2105.09152
-  \end{verbatim}
- 
-  
-  
-  
-  
-  \noindent\makebox[\linewidth]{\rule{\paperwidth}{0.4pt}}
-  
   
 \end{document}
